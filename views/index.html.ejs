@@ -1,0 +1,183 @@
+<script>
+$(function() {
+    $('#rider_form').hide();
+    var map = null;
+    var markers = [];
+    $('#rider_form').submit(onSubmit)
+
+    if (window.WebSocket) {
+        var ws = new WebSocket('ws://' + location.host + ':9999');
+        ws.onmessage = onMessage;
+    }
+
+    function onMessage(msg) {
+        var result = JSON.parse(msg.data);
+        processResult(result);
+    }
+
+    function onSuccess(data) {
+        markers.forEach(function(marker) {
+            marker.setMap(null);
+        });
+        markers = [];
+        data.forEach(processResult);
+    }
+
+    function processResult(res) {
+        drawMarker(map, res, parseFloat(res.latitude),parseFloat( res.longitude));
+
+        //drawCircle(map, parseFloat(res.latitude),parseFloat( res.longitude), parseFloat(res.accuracy), color);
+    }
+
+    function getData() {
+        var data = {
+            status: $('input:radio[name="status"]:checked').val(),
+            route: $('#rider_route').val(),
+            username: $('#rider_username').val(),
+            city: $('#rider_city').val(),
+            latitude: $('#rider_latitude').val(),
+            longitude: $('#rider_longitude').val(),
+            accuracy: $('#rider_accuracy').val(),
+        }
+
+        return data;
+    }
+
+    function onSubmit() {
+        debugger;
+        var data = getData();
+        if (!data.route) {
+            return false;
+        }
+
+        if (ws) {
+            ws.send(JSON.stringify(data));
+        } else {
+            $.ajax({
+                url: '/rider/new',
+                type: 'POST',
+                data: data,
+                dataType: 'json',
+                success: onSuccess
+            });
+        }
+        setInterval(onSubmit, 10000)
+        return false;
+    }
+
+    function drawMarker(map, res, latitude, longitude) {
+        var color;
+        var size;
+        if (res.status == 'waiting') {
+            color = '550000';
+            size = '8';
+        } else {
+            color = '005500';
+            size = '15';
+        }
+
+        var url = "http://chxo.com/labelgen/labelgen.php?textval=" + (res.route || '?') + "&font=VERDANA.TTF&size=" + size + "&bgcolor=%23FFAAAA&textcolor=%23" + color + "&transparent=0";
+        var latlng = new google.maps.LatLng(latitude, longitude);
+        var marker = new google.maps.Marker({position: latlng, title: res.route, icon: url});
+        marker.setMap(map);
+        markers.push(marker);
+    }
+
+    function drawCircle(map, latitude, longitude, radius, color) {
+        var d2r = Math.PI / 180;
+        var circleLatLngs = [];
+        var circleLat = (radius /3963.189) / d2r; // miles
+        var circleLng = circleLat / Math.cos(latitude * d2r);
+
+        // Create polygon points (extra point to close polygon)
+        for (var i = 0; i < 361; i++) {
+            // Convert degrees to radians
+            var theta = i * d2r;
+            var vertexLat = latitude + (circleLat * Math.sin(theta));
+            var vertexLng = longitude + (circleLng * Math.cos(theta));
+            var vertextLatLng = new google.maps.LatLng(
+                parseFloat(vertexLat), parseFloat(vertexLng)
+            );
+            circleLatLngs.push(vertextLatLng);
+        }
+
+        var circle = new google.maps.Polygon({
+            paths: circleLatLngs,
+            strokeColor: color || "blue",
+            strokeOpacity: 0.8,
+            strokeWeight: 2,
+            fillColor: color || "blue",
+            fillOpacity: 0.35
+        });
+        circle.setMap(map);
+    }
+
+
+    function error(msg) {
+        alert(msg);
+    }
+
+    function geocode_success(results) {
+        var cmps = results[0].address_components;
+
+        for (var x=0; x < cmps.length; x++) {
+            var cmp = cmps[x];
+            if (cmp.types.indexOf('locality') != -1) {
+                $('#rider_city').val(cmp.long_name);
+                break;
+            }
+        }
+        $.ajax({
+            url: '/riders',
+            type: 'GET',
+            data: getData(),
+            dataType: 'json',
+            success: onSuccess
+        });
+        $('#rider_form').show();
+    }
+
+    function location_success(position) {
+        var latlng = new google.maps.LatLng(position.coords.latitude, position.coords.longitude);
+        var myOptions = {
+            zoom: 13,
+            center: latlng,
+            mapTypeId: google.maps.MapTypeId.ROADMAP
+        };
+        map = new google.maps.Map(document.getElementById("map_canvas"), myOptions);
+
+        drawCircle(map, position.coords.latitude, position.coords.longitude, position.coords.accuracy/1000);
+
+        var gc = new google.maps.Geocoder();
+        gc.geocode({latLng: latlng}, geocode_success, error);
+
+        $('#rider_latitude').val(position.coords.latitude);
+        $('#rider_longitude').val(position.coords.longitude);
+        $('#rider_accuracy').val(position.coords.accuracy/1000);
+    }
+
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(location_success, error);
+    } else {
+        error('You need a new browser');
+    }
+});
+
+</script>
+<form id="rider_form">
+    <input type="hidden" name="city" id="rider_city">
+    <input type="hidden" name="latitude" id="rider_latitude">
+    <input type="hidden" name="longitude" id="rider_longitude">
+    <input type="hidden" name="accuracy" id="rider_accuracy">
+
+    <label>Route:</label>
+    <input type="text" name="route" id="rider_route"><br>
+    
+    <label>I am:</label>
+    <input type="radio" name="status" value="waiting" CHECKED>Waiting
+    <input type="radio" name="status" value="riding">Riding<br>
+   
+    <input type="submit" value="Check In">
+</form><br>
+<div id="map_canvas" style="width: 500px; height: 500px"></div>
+
